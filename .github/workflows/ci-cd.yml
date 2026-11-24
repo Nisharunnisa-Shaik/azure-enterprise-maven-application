@@ -1,0 +1,19 @@
+name: Call DevOps Build Workflow
+on:
+  commit:
+    branches:
+      - main
+jobs:
+  call_build_workflow:
+    uses: azure-enterprise-devops-platform/.github/workflows/maven-ci.yml@main
+    with:
+      repo_name: "maven-application"
+      branch_name: "main"
+  call_deploy_workflow:
+    needs: call_build_workflow
+    uses: azure-enterprise-devops-platform/.github/workflows/aks-deploy.yml@main
+    with:
+      repo_name: "maven-application"
+      branch_name: "main"
+      kustomize_path: "deploy/kustomize"
+      dockerfile_path: "Dockerfile"
