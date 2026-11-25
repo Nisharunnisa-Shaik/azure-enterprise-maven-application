@@ -1,5 +1,5 @@
 name: Emergency Production Deployment
-run-name: Emergency production deployment
+run-name: Emergency ${{ inputs.emergency_action }} - ${{ inputs.incident_id }}
 
 on:
   workflow_dispatch:
@@ -8,9 +8,17 @@ on:
         description: Incident or emergency change record ID
         required: true
         type: string
-      image_reference:
-        description: Immutable image reference already present in the production ACR (repository@sha256:digest)
+      emergency_action:
+        description: Roll back to an existing production digest or build and deploy a fix from main
         required: true
+        type: choice
+        options:
+          - rollback
+          - build_fix
+        default: rollback
+      image_reference:
+        description: Existing production ACR image pinned by digest; required only for rollback
+        required: false
         type: string
 
 permissions:
@@ -22,21 +30,71 @@ jobs:
     runs-on: selfhosted-ubuntu
     timeout-minutes: 5
     steps:
-      - name: Validate incident ID and image digest
+      - name: Validate incident, action, and dispatch ref
         uses: Nisharunnisa-Shaik/azure-enterprise-devops-platform/.github/actions/azure/aks/validate-emergency@main
         with:
           incident_id: ${{ inputs.incident_id }}
+          emergency_action: ${{ inputs.emergency_action }}
           image_reference: ${{ inputs.image_reference }}
           dispatch_ref: ${{ github.ref }}
 
-  deploy_production:
-    name: Deploy approved image to production
+  rollback_production:
+    name: Roll back to approved production image
     needs: validate_request
+    if: ${{ inputs.emergency_action == 'rollback' }}
     uses: Nisharunnisa-Shaik/azure-enterprise-devops-platform/.github/workflows/aks-deploy.yml@main
     with:
       repo_name: ${{ github.repository }}
-      branch_name: main
+      branch_name: ${{ github.sha }}
       environment_name: prod
       image_reference: ${{ inputs.image_reference }}
+      require_image_registry_match: true
+      require_smoke_test: true
+
+  build_emergency_fix:
+    name: Run CI and build emergency fix
+    needs: validate_request
+    if: ${{ inputs.emergency_action == 'build_fix' }}
+    uses: Nisharunnisa-Shaik/azure-enterprise-devops-platform/.github/workflows/maven-ci.yml@main
+    with:
+      repo_name: ${{ github.repository }}
+      branch_name: ${{ github.sha }}
+      sonar_host_url: ${{ vars.SONAR_HOST_URL }}
+      sonar_project_key: ${{ vars.SONAR_PROJECT_KEY }}
+      acr_name: ${{ vars.ACR_NAME }}
+      image_name: ${{ vars.ACR_IMAGE_NAME }}
+      acr_subscription: ${{ vars.ACR_SUBSCRIPTION_ID }}
+      keyvault_name: ${{ vars.BUILD_KEYVAULT_NAME }}
+      keyvault_subscription: ${{ vars.BUILD_KEYVAULT_SUBSCRIPTION }}
+      auth_method: ${{ vars.BUILD_AUTH_METHOD || 'msi' }}
+      prisma_console_url: ${{ vars.PRISMA_CONSOLE_URL }}
+      twistcli_url: ${{ vars.PRISMA_TWISTCLI_URL }}
+    secrets:
+      sonar_token: ${{ secrets.SONAR_TOKEN }}
+
+  deploy_emergency_fix_to_dev:
+    name: Deploy scanned fix to Dev and smoke test
+    needs: build_emergency_fix
+    if: ${{ inputs.emergency_action == 'build_fix' }}
+    uses: Nisharunnisa-Shaik/azure-enterprise-devops-platform/.github/workflows/aks-deploy.yml@main
+    with:
+      repo_name: ${{ github.repository }}
+      branch_name: ${{ github.sha }}
+      environment_name: dev
+      image_reference: ${{ needs.build_emergency_fix.outputs.image_reference }}
+      require_image_registry_match: true
+      require_smoke_test: true
+
+  deploy_emergency_fix_to_prod:
+    name: Promote Dev fix to production
+    needs: deploy_emergency_fix_to_dev
+    if: ${{ inputs.emergency_action == 'build_fix' }}
+    uses: Nisharunnisa-Shaik/azure-enterprise-devops-platform/.github/workflows/aks-deploy.yml@main
+    with:
+      repo_name: ${{ github.repository }}
+      branch_name: ${{ github.sha }}
+      environment_name: prod
+      image_reference: ${{ needs.deploy_emergency_fix_to_dev.outputs.image_reference }}
+      source_environment: dev
       require_image_registry_match: true
       require_smoke_test: true
