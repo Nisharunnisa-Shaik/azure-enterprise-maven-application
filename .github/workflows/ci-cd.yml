@@ -1,19 +1,113 @@
-name: Call DevOps Build Workflow
+name: Maven CI and Environment Promotion
+
 on:
-  commit:
+  push:
     branches:
       - main
+      - develop
+      - release/*
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
 jobs:
-  call_build_workflow:
-    uses: azure-enterprise-devops-platform/.github/workflows/maven-ci.yml@main
+  build_and_publish:
+    uses: Nisharunnisa-Shaik/azure-enterprise-devops-platform/.github/workflows/maven-ci.yml@main
     with:
-      repo_name: "maven-application"
-      branch_name: "main"
-  call_deploy_workflow:
-    needs: call_build_workflow
-    uses: azure-enterprise-devops-platform/.github/workflows/aks-deploy.yml@main
+      repo_name: ${{ github.repository }}
+      branch_name: ${{ github.sha }}
+      sonar_host_url: ${{ vars.SONAR_HOST_URL }}
+      sonar_project_key: ${{ vars.SONAR_PROJECT_KEY }}
+      acr_name: ${{ vars.ACR_NAME }}
+      image_name: ${{ vars.ACR_IMAGE_NAME }}
+      acr_subscription: ${{ vars.ACR_SUBSCRIPTION_ID }}
+      keyvault_name: ${{ vars.BUILD_KEYVAULT_NAME }}
+      keyvault_subscription: ${{ vars.BUILD_KEYVAULT_SUBSCRIPTION }}
+      auth_method: ${{ vars.BUILD_AUTH_METHOD || 'msi' }}
+      prisma_console_url: ${{ vars.PRISMA_CONSOLE_URL }}
+      twistcli_url: ${{ vars.PRISMA_TWISTCLI_URL }}
+    secrets:
+      sonar_token: ${{ secrets.SONAR_TOKEN }}
+
+  deploy_dev:
+    needs: build_and_publish
+    uses: Nisharunnisa-Shaik/azure-enterprise-devops-platform/.github/workflows/aks-deploy.yml@main
     with:
-      repo_name: "maven-application"
-      branch_name: "main"
-      kustomize_path: "deploy/kustomize"
-      dockerfile_path: "Dockerfile"
+      repo_name: ${{ github.repository }}
+      branch_name: ${{ github.sha }}
+      environment_name: dev
+      image_reference: ${{ needs.build_and_publish.outputs.image_reference }}
+      require_image_registry_match: true
+
+  validate_dev:
+    needs: deploy_dev
+    runs-on: selfhosted-ubuntu
+    environment: dev
+    steps:
+      - name: Checkout application configuration
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Load development configuration
+        id: deployment_config
+        uses: Nisharunnisa-Shaik/azure-enterprise-devops-platform/.github/actions/config/load-environment@main
+        with:
+          config_file: configuration/maven-config.yaml
+          environment_name: dev
+
+      - name: Smoke test development
+        uses: Nisharunnisa-Shaik/azure-enterprise-devops-platform/.github/actions/azure/aks/smoke-test@main
+        with:
+          environment_name: dev
+          smoke_test_url: ${{ steps.deployment_config.outputs.smoke_test_url }}
+
+  deploy_uat:
+    needs:
+      - build_and_publish
+      - validate_dev
+    uses: Nisharunnisa-Shaik/azure-enterprise-devops-platform/.github/workflows/aks-deploy.yml@main
+    with:
+      repo_name: ${{ github.repository }}
+      branch_name: ${{ github.sha }}
+      environment_name: uat
+      image_reference: ${{ needs.build_and_publish.outputs.image_reference }}
+      source_environment: dev
+      require_image_registry_match: true
+
+  validate_uat:
+    needs: deploy_uat
+    runs-on: selfhosted-ubuntu
+    environment: uat
+    steps:
+      - name: Checkout application configuration
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Load UAT configuration
+        id: deployment_config
+        uses: Nisharunnisa-Shaik/azure-enterprise-devops-platform/.github/actions/config/load-environment@main
+        with:
+          config_file: configuration/maven-config.yaml
+          environment_name: uat
+
+      - name: Smoke test UAT
+        uses: Nisharunnisa-Shaik/azure-enterprise-devops-platform/.github/actions/azure/aks/smoke-test@main
+        with:
+          environment_name: uat
+          smoke_test_url: ${{ steps.deployment_config.outputs.smoke_test_url }}
+
+  deploy_prod:
+    needs:
+      - deploy_uat
+      - validate_uat
+    uses: Nisharunnisa-Shaik/azure-enterprise-devops-platform/.github/workflows/aks-deploy.yml@main
+    with:
+      repo_name: ${{ github.repository }}
+      branch_name: ${{ github.sha }}
+      environment_name: prod
+      image_reference: ${{ needs.deploy_uat.outputs.image_reference }}
+      source_environment: uat
+      require_image_registry_match: true

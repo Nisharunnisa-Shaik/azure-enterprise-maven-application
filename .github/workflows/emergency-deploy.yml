@@ -1,0 +1,42 @@
+name: Emergency Production Deployment
+run-name: Emergency production deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      incident_id:
+        description: Incident or emergency change record ID
+        required: true
+        type: string
+      image_reference:
+        description: Immutable image reference already present in the production ACR (repository@sha256:digest)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate_request:
+    name: Validate emergency request
+    runs-on: selfhosted-ubuntu
+    timeout-minutes: 5
+    steps:
+      - name: Validate incident ID and image digest
+        uses: Nisharunnisa-Shaik/azure-enterprise-devops-platform/.github/actions/azure/aks/validate-emergency@main
+        with:
+          incident_id: ${{ inputs.incident_id }}
+          image_reference: ${{ inputs.image_reference }}
+          dispatch_ref: ${{ github.ref }}
+
+  deploy_production:
+    name: Deploy approved image to production
+    needs: validate_request
+    uses: Nisharunnisa-Shaik/azure-enterprise-devops-platform/.github/workflows/aks-deploy.yml@main
+    with:
+      repo_name: ${{ github.repository }}
+      branch_name: main
+      environment_name: prod
+      image_reference: ${{ inputs.image_reference }}
+      require_image_registry_match: true
+      require_smoke_test: true

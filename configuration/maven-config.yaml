@@ -1,0 +1,62 @@
+azure:
+  auth_method: msi
+  secrets:
+    msi_id_secret_name: MSI_ID
+    client_id_secret_name: AZURE_CLIENT_ID
+    client_secret_secret_name: AZURE_CLIENT_SECRET
+    tenant_id_secret_name: AZURE_TENANT_ID
+  acr:
+    dev:
+      name: ""
+      resource_group: ""
+      subscription: ""
+      login_server: ""
+    uat:
+      name: ""
+      resource_group: ""
+      subscription: ""
+      login_server: ""
+    prod:
+      name: ""
+      resource_group: ""
+      subscription: ""
+      login_server: ""
+  aks:
+    dev:
+      name: aks-dev-cluster
+      resource_group: aks-dev-rg
+      subscription: aks-dev-subscription
+      namespace: nsp-dev
+      container_name: ""
+      deployment_name: ""
+      kustomize_path: deploy/kustomize/overlay/dev
+      smoke_test_url: ""
+    uat:
+      name: aks-uat-cluster
+      resource_group: aks-uat-rg
+      subscription: aks-uat-subscription
+      namespace: nsp-uat
+      container_name: ""
+      deployment_name: ""
+      kustomize_path: deploy/kustomize/overlay/uat
+      smoke_test_url: ""
+    prod:
+      name: aks-prod-cluster
+      resource_group: aks-prod-rg
+      subscription: prod-subscription
+      namespace: nsp-prod
+      container_name: ""
+      deployment_name: ""
+      kustomize_path: deploy/kustomize/overlay/prod
+      smoke_test_url: ""
+  keyvault:
+    dev:
+      name: kv-dev
+      subscription: kv-dev-subscription
+    uat:
+      name: kv-uat
+      subscription: kv-uat-subscription
+    prod:
+      name: kv-prod
+      subscription: kv-prod-subscription
+
