@@ -1,4 +1,5 @@
 name: Maven CI and Environment Promotion
+run-name: ${{ github.event.inputs.demo_mode == 'true' && '[SIMULATION] ' || '' }}Maven CI and Environment Promotion - ${{ github.ref_name }}
 
 on:
   push:
@@ -7,6 +8,12 @@ on:
       - develop
       - release/*
   workflow_dispatch:
+    inputs:
+      demo_mode:
+        description: Echo build, scan, and deployment steps without calling Azure or changing infrastructure
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -17,6 +24,7 @@ jobs:
     with:
       repo_name: ${{ github.repository }}
       branch_name: ${{ github.sha }}
+      demo_mode: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.demo_mode == 'true' }}
       sonar_host_url: ${{ vars.SONAR_HOST_URL }}
       sonar_project_key: ${{ vars.SONAR_PROJECT_KEY }}
       acr_name: ${{ vars.ACR_NAME }}
@@ -38,26 +46,39 @@ jobs:
       branch_name: ${{ github.sha }}
       environment_name: dev
       image_reference: ${{ needs.build_and_publish.outputs.image_reference }}
+      demo_mode: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.demo_mode == 'true' }}
       require_image_registry_match: true
 
   validate_dev:
     needs: deploy_dev
-    runs-on: selfhosted-ubuntu
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.demo_mode == 'true' && 'ubuntu-latest' || 'selfhosted-ubuntu' }}
     environment: dev
     steps:
+      - name: SIMULATION ONLY - Show Dev validation
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.demo_mode == 'true' }}
+        shell: bash
+        run: |
+          echo "::notice::SIMULATION ONLY - no application configuration was loaded and no endpoint was contacted."
+          echo "Would check out the application configuration."
+          echo "Would load the Dev configuration and smoke-test URL."
+          echo "Would validate the Dev deployment with its configured smoke-test URL."
+
       - name: Checkout application configuration
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.demo_mode != 'true' }}
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
 
       - name: Load development configuration
         id: deployment_config
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.demo_mode != 'true' }}
         uses: Nisharunnisa-Shaik/azure-enterprise-devops-platform/.github/actions/config/load-environment@main
         with:
           config_file: configuration/maven-config.yaml
           environment_name: dev
 
       - name: Smoke test development
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.demo_mode != 'true' }}
         uses: Nisharunnisa-Shaik/azure-enterprise-devops-platform/.github/actions/azure/aks/smoke-test@main
         with:
           environment_name: dev
@@ -74,26 +95,39 @@ jobs:
       environment_name: uat
       image_reference: ${{ needs.build_and_publish.outputs.image_reference }}
       source_environment: dev
+      demo_mode: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.demo_mode == 'true' }}
       require_image_registry_match: true
 
   validate_uat:
     needs: deploy_uat
-    runs-on: selfhosted-ubuntu
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.demo_mode == 'true' && 'ubuntu-latest' || 'selfhosted-ubuntu' }}
     environment: uat
     steps:
+      - name: SIMULATION ONLY - Show UAT validation
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.demo_mode == 'true' }}
+        shell: bash
+        run: |
+          echo "::notice::SIMULATION ONLY - no application configuration was loaded and no endpoint was contacted."
+          echo "Would check out the application configuration."
+          echo "Would load the UAT configuration and smoke-test URL."
+          echo "Would validate the UAT deployment with its configured smoke-test URL."
+
       - name: Checkout application configuration
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.demo_mode != 'true' }}
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
 
       - name: Load UAT configuration
         id: deployment_config
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.demo_mode != 'true' }}
         uses: Nisharunnisa-Shaik/azure-enterprise-devops-platform/.github/actions/config/load-environment@main
         with:
           config_file: configuration/maven-config.yaml
           environment_name: uat
 
       - name: Smoke test UAT
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.demo_mode != 'true' }}
         uses: Nisharunnisa-Shaik/azure-enterprise-devops-platform/.github/actions/azure/aks/smoke-test@main
         with:
           environment_name: uat
@@ -110,4 +144,5 @@ jobs:
       environment_name: prod
       image_reference: ${{ needs.deploy_uat.outputs.image_reference }}
       source_environment: uat
+      demo_mode: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.demo_mode == 'true' }}
       require_image_registry_match: true

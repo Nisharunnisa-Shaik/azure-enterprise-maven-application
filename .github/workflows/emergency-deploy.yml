@@ -1,5 +1,5 @@
 name: Emergency Production Deployment
-run-name: Emergency ${{ inputs.emergency_action }} - ${{ inputs.incident_id }}
+run-name: ${{ inputs.demo_mode && '[SIMULATION] ' || '' }}Emergency ${{ inputs.emergency_action }} - ${{ inputs.incident_id }}
 
 on:
   workflow_dispatch:
@@ -20,6 +20,11 @@ on:
         description: Existing production ACR image pinned by digest; required only for rollback
         required: false
         type: string
+      demo_mode:
+        description: Echo emergency steps without accessing Azure, ACR, or AKS
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -27,10 +32,49 @@ permissions:
 jobs:
   validate_request:
     name: Validate emergency request
-    runs-on: selfhosted-ubuntu
+    runs-on: ${{ inputs.demo_mode && 'ubuntu-latest' || 'selfhosted-ubuntu' }}
     timeout-minutes: 5
     steps:
+      - name: SIMULATION ONLY - Validate emergency demo inputs
+        if: ${{ inputs.demo_mode }}
+        shell: bash
+        env:
+          INCIDENT_ID: ${{ inputs.incident_id }}
+          EMERGENCY_ACTION: ${{ inputs.emergency_action }}
+          IMAGE_REFERENCE: ${{ inputs.image_reference }}
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$INCIDENT_ID" ]]; then
+            echo "An incident ID is required, including for a simulation." >&2
+            exit 1
+          fi
+          if [[ "$DISPATCH_REF" != "refs/heads/main" ]]; then
+            echo "Emergency workflow must be dispatched from protected main." >&2
+            exit 1
+          fi
+          case "$EMERGENCY_ACTION" in
+            rollback)
+              if [[ -n "$IMAGE_REFERENCE" && ! "$IMAGE_REFERENCE" =~ @sha256:[0-9a-f]{64}$ ]]; then
+                echo "A supplied simulation image reference must end with a lowercase SHA-256 digest." >&2
+                exit 1
+              fi
+              ;;
+            build_fix)
+              if [[ -n "$IMAGE_REFERENCE" ]]; then
+                echo "Leave image_reference empty for build_fix." >&2
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Unsupported emergency action: $EMERGENCY_ACTION" >&2
+              exit 1
+              ;;
+          esac
+          echo "::notice::SIMULATION ONLY - emergency request checks passed; no infrastructure was contacted."
+
       - name: Validate incident, action, and dispatch ref
+        if: ${{ !inputs.demo_mode }}
         uses: Nisharunnisa-Shaik/azure-enterprise-devops-platform/.github/actions/azure/aks/validate-emergency@main
         with:
           incident_id: ${{ inputs.incident_id }}
@@ -48,6 +92,7 @@ jobs:
       branch_name: ${{ github.sha }}
       environment_name: prod
       image_reference: ${{ inputs.image_reference }}
+      demo_mode: ${{ inputs.demo_mode }}
       require_image_registry_match: true
       require_smoke_test: true
 
@@ -59,6 +104,7 @@ jobs:
     with:
       repo_name: ${{ github.repository }}
       branch_name: ${{ github.sha }}
+      demo_mode: ${{ inputs.demo_mode }}
       sonar_host_url: ${{ vars.SONAR_HOST_URL }}
       sonar_project_key: ${{ vars.SONAR_PROJECT_KEY }}
       acr_name: ${{ vars.ACR_NAME }}
@@ -82,6 +128,7 @@ jobs:
       branch_name: ${{ github.sha }}
       environment_name: dev
       image_reference: ${{ needs.build_emergency_fix.outputs.image_reference }}
+      demo_mode: ${{ inputs.demo_mode }}
       require_image_registry_match: true
       require_smoke_test: true
 
@@ -96,5 +143,6 @@ jobs:
       environment_name: prod
       image_reference: ${{ needs.deploy_emergency_fix_to_dev.outputs.image_reference }}
       source_environment: dev
+      demo_mode: ${{ inputs.demo_mode }}
       require_image_registry_match: true
       require_smoke_test: true
